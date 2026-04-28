@@ -1,44 +1,56 @@
 # NBA Polymarket Dual-Leg Strategy — Code & Data
 
-Companion repository for the report **"Quantitative Strategy Design & Implementation — NBA Polymarket Dual-Leg Strategy"** (Isaac Vergara, Duke University, 2026).
+## Abstract
 
-The PDF report is submitted separately. This repo contains every script and dataset needed to reproduce every table, figure, and number cited in it.
+An XGBoost classifier on 2012–2025 NBA team data scored 71.8% on the 2025-26 holdout, edging out Polymarket pregame (71.2%) and ESPN (67.0%). That accuracy alone is not a strategy: naive Kelly across 314 model-recommended bets lost 25–100% under every sizing method, because 75% of those bets were underdogs and the unfiltered win rate was 34%.
+
+Filtering to model edge ≥ 7% and confidence ≥ 60% cut the universe to 24 bets at 66.7% win rate and +50.9% return. A dual-leg routing rule — favorites (conf ≥ 60%) held to resolution, underdogs (entry ≥ $0.30) actively managed with ESPN Win Probability exits — expanded the tradeable set to 76 bets at +39.8% return, 8.4% max drawdown, Sharpe 5.50.
+
+### Key learnings
+
+- **Filters are the primary alpha, not model complexity.** The Stage 1 → Stage 2 jump from −25.6% to +50.9% comes entirely from filtering. No ensemble, neural net, or Bayesian update is needed.
+- **Conviction-based exits beat uniform exits.** Applying ESPN WP stop-loss to every bet *reduces* returns by cutting favorites that would have resolved as winners. Routing favorites to hold-to-resolution and underdogs to active management captures both alpha sources.
+- **The flip-strategy intuition is wrong.** Across 15,639 historical games, underdogs leading at Q1 go on to win 47.9% of the time, not the 25% a "regression to favorite" narrative assumes. Selling the underdog at the Q1 mark is correct; flipping to buy the favorite is not.
+- **Microstructure has sign-dependent momentum.** Slow 2-hour price grinds toward our side predict losses (edge is already priced in); sharp 30-minute moves predict wins (fresh sharp money). Coefficients: −0.43 vs +0.25.
+- **Regime shifts kill filtered strategies.** Live performance degraded from mid-March onward as star rest, tanking, and post-trade-deadline lineups broke the model's season-to-date features. Safe operating window: ~Nov 20 → Mar 10.
+
+Live forward tests confirmed both legs of the simulation: V1 (unfiltered Kelly) returned −96.4% on 181 positions, mapping to the simulated −100% Full Kelly; V2 (filtered + dual-leg) returned −1.0% on 22 closed positions and drifted to −17.8% on 25 as the FAV leg collapsed in late March.
 
 ---
 
-## What's here
+## Layout
 
 ```
 .
-├── main.py                       NBA prediction CLI (XGBoost on live stats)
 ├── config.toml                   Season date ranges
 ├── requirements.txt
 │
-├── build_*.py / fetch_*.py       Data pipeline (Polymarket, ESPN WP, Q1 scores, history)
-├── backtest_*.py                 Backtest engines (Stages 1–4, late-season retro)
-├── sizing_comparison.py          Flat / Half-Kelly / Edge-scaled sizing comparison
-├── flip_backtest.py              Dr. Yang's flip-strategy test
-├── monthly_decomposition.py      Monthly FAV / DOG performance decomposition
-├── mispricing_filter.py          Logistic-regression filter on raw model_edge
+├── build_*.py / fetch_*.py       Polymarket, ESPN WP, Q1 scores, history
+├── backtest_simulation.py        Stage 1–4 backtest
+├── sizing_comparison.py          Flat / Half-Kelly / Edge-scaled comparison
+├── flip_backtest.py              Flip-strategy test
+├── monthly_decomposition.py      Monthly FAV / DOG performance
+├── mispricing_filter.py          Logistic-regression filter on model_edge
 ├── enriched_filter.py            12-feature filter using tick microstructure
 ├── tick_features.py              10-min PM tick → microstructure features
 ├── leg_weight_optimization.py    FAV / DOG Kelly + risk-parity + mean-variance
-├── backfill_market_context.py    Retroactive feature enrichment for live trades
+├── retro_backtest_late_season.py Late-season FAV-only retro
+├── backfill_market_context.py    Retro feature enrichment for live trades
 │
 ├── src/
-│   ├── DataProviders/            Polymarket Gamma, ESPN, NBA, SBR, CLOB price history
+│   ├── DataProviders/            Polymarket Gamma, ESPN, NBA, SBR, CLOB
 │   ├── Predict/                  XGBoost / NN inference runners
 │   ├── Train-Models/             XGBoost / NN training scripts
-│   ├── Process-Data/             Team / odds ingestion + feature engineering
-│   ├── Utils/                    Kelly, EV, Backtester, drawdown, alerts
-│   └── Polymarket/               Paper trader V2 (live system) + scheduler
+│   ├── Process-Data/             Team / odds ingestion + features
+│   ├── Utils/                    Kelly, EV, drawdown, alerts
+│   └── Polymarket/               Paper trader V2 + scheduler
 │
-├── Models/XGBoost_Models/        The trained ML model used in the report
-├── Data/                         Schedule + committable backtest CSVs
-└── nba_game_snapshots.parquet    10-min Polymarket tick snapshots (microstructure)
+├── Models/XGBoost_Models/        Trained 69.8% ML model
+├── Data/                         Schedule + backtest CSVs
+└── nba_game_snapshots.parquet    10-min Polymarket tick snapshots
 ```
 
-See **[REPRODUCE.md](REPRODUCE.md)** for the exact command that reproduces each table in the report.
+See [REPRODUCE.md](REPRODUCE.md) for the command that reproduces each table.
 
 ---
 
@@ -51,21 +63,4 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-No API keys are required for any of the public data providers used here (Polymarket Gamma, NBA Stats, ESPN, SBR).
-
-To re-run a backtest table from scratch, see `REPRODUCE.md`. To regenerate the underlying CSVs from upstream APIs, the data-pipeline scripts at the project root walk through it end-to-end.
-
----
-
-## What's intentionally not here
-
-- **Soccer-draw and CBB systems** — separate live trading systems described in the parent project; not part of this report.
-- **`Data/TeamData.sqlite` / `Data/OddsData.sqlite`** — the team-stat and historical-odds databases used to *train* the XGBoost model. They are large (~hundreds of MB) and rebuildable with `python -m src.Process-Data.Get_Data --backfill` and `python -m src.Process-Data.Get_Odds_Data --backfill`. The backtest CSVs already shipped in `Data/backtest/` contain the model predictions, so the report's tables can be reproduced without rebuilding the DBs.
-- **Live paper-trading state files** (`Data/paper_trading*/bankroll.json` etc.) — generated on first `--init` run.
-
----
-
-## Author
-
-Isaac Vergara (`isaacvergaram@hotmail.com`) — Duke University.
-Strategy research supervised by **Dr. Hanchao Yang** (Duke MIDS; Kalshi trader).
+No API keys required.
